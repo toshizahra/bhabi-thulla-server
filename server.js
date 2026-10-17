@@ -11,7 +11,8 @@ app.get('/health', (_, res) => res.send('ok'));
 
 const SUITS = ['S', 'H', 'D', 'C'];
 const MAX_PLAYERS = 8;
-const DELAY = Number(process.env.DELAY_X || 1); // testing ke liye
+const EMOJIS = ['😂', '😡', '😎', '🔥', '👏', '😭', '🤫', '💥'];
+const DELAY = Number(process.env.DELAY_X || 1); // test speed multiplier
 const rooms = {};
 
 // ---------- helpers ----------
@@ -95,7 +96,7 @@ function startGame(room) {
   room.lastEvent = null;
   room.log = [];
   const starter = room.players.findIndex(p => p.hand.some(c => c.s === 'S' && c.r === 14));
-  addLog(room, `${room.players[starter].name} ke paas Ekka Hukum ♠ hai, woh shuru karega`);
+  addLog(room, `${room.players[starter].name} has the Ace of Spades and starts`);
   beginTrick(room, starter);
 }
 
@@ -121,25 +122,25 @@ function highestIdx(room) {
 }
 
 function playCard(room, pid, cardId) {
-  if (room.state !== 'playing') return 'Game shuru nahi hua';
-  if (room.resolving) return 'Thora ruko...';
+  if (room.state !== 'playing') return 'The game has not started';
+  if (room.resolving) return 'Please wait...';
   const idx = room.trickOrder[room.trickPos];
   const p = room.players[idx];
-  if (!p || p.id !== pid) return 'Abhi aapki baari nahi';
+  if (!p || p.id !== pid) return 'It is not your turn';
   const ci = p.hand.findIndex(c => cid(c) === cardId);
-  if (ci < 0) return 'Ye card aapke paas nahi';
+  if (ci < 0) return 'You do not have that card';
   const card = p.hand[ci];
 
   if (room.trick.length === 0) {
-    if (room.firstTrick && !(card.s === 'S' && card.r === 14)) return 'Pehli chaal Ekka Hukum ♠ se hogi';
+    if (room.firstTrick && !(card.s === 'S' && card.r === 14)) return 'The first trick must start with the Ace of Spades ♠';
   } else if (card.s !== room.leadSuit && p.hand.some(c => c.s === room.leadSuit)) {
-    return `${SYM[room.leadSuit]} ka card chalna zaroori hai`;
+    return `You must follow suit: ${SYM[room.leadSuit]}`;
   }
 
   p.hand.splice(ci, 1);
   if (room.trick.length === 0) room.leadSuit = card.s;
   const offSuit = room.trick.length > 0 && card.s !== room.leadSuit;
-  const isThulla = offSuit && !room.firstTrick; // pehli trick mein thulla nahi lagta
+  const isThulla = offSuit && !room.firstTrick; // no thulla on the first trick
   room.trick.push({ pid: p.id, idx, card, thulla: isThulla });
 
   if (isThulla) {
@@ -156,11 +157,11 @@ function resolveTrick(room, type, winnerIdx, throwerName) {
   room.resolving = true;
   const w = room.players[winnerIdx];
   if (type === 'pickup') {
-    room.lastEvent = { type: 'thulla', by: throwerName, to: w.name, n: room.trick.length, t: Date.now() };
-    addLog(room, `💥 ${throwerName} ne thulla mara! ${w.name} ${room.trick.length} cards uthayega`);
+    room.lastEvent = { type: 'thulla', by: throwerName, to: w.name, toId: w.id, n: room.trick.length, t: Date.now() };
+    addLog(room, `💥 ${throwerName} played a Thulla! ${w.name} picks up ${room.trick.length} cards`);
   } else {
-    room.lastEvent = { type: 'clear', to: w.name, t: Date.now() };
-    addLog(room, `Haath saaf. ${w.name} agli chaal chalega`);
+    room.lastEvent = { type: 'clear', to: w.name, toId: w.id, t: Date.now() };
+    addLog(room, `Trick cleared. ${w.name} leads next`);
   }
   broadcast(room);
 
@@ -178,7 +179,7 @@ function resolveTrick(room, type, winnerIdx, throwerName) {
       if (!p.out && p.hand.length === 0) {
         p.out = true;
         room.finishOrder.push(p.id);
-        addLog(room, `✅ ${p.name} bach gaya!`);
+        addLog(room, `✅ ${p.name} is safe!`);
       }
     });
 
@@ -186,7 +187,7 @@ function resolveTrick(room, type, winnerIdx, throwerName) {
     if (active.length <= 1) {
       room.state = 'over';
       room.bhabhi = active[0] ? active[0].id : null;
-      addLog(room, active[0] ? `😂 ${active[0].name} BHABHI ban gaya!` : 'Koi Bhabhi nahi bana, draw!');
+      addLog(room, active[0] ? `😂 ${active[0].name} is the BHABHI!` : 'Draw, no Bhabhi this time!');
       broadcast(room);
       return;
     }
@@ -214,7 +215,7 @@ function cleanName(n) {
 
 io.on('connection', socket => {
   socket.on('create', ({ name, token }) => {
-    if (!token) return socket.emit('err', 'Token missing, page reload karo');
+    if (!token) return socket.emit('err', 'Session token missing, please reload the page');
     const code = newCode();
     const room = {
       code, hostId: token, state: 'lobby', players: [], trick: [], trickOrder: [], trickPos: 0,
@@ -229,7 +230,7 @@ io.on('connection', socket => {
   socket.on('join', ({ code, name, token }) => {
     code = String(code || '').trim().toUpperCase();
     const room = rooms[code];
-    if (!room) return socket.emit('err', 'Room nahi mila. Code check karo');
+    if (!room) return socket.emit('err', 'Room not found. Please check the code');
     let p = room.players.find(x => x.id === token);
     if (p) {
       p.socketId = socket.id;
@@ -237,8 +238,8 @@ io.on('connection', socket => {
       if (name) p.name = cleanName(name);
       if (room.cleanup) { clearTimeout(room.cleanup); room.cleanup = null; }
     } else {
-      if (room.state !== 'lobby') return socket.emit('err', 'Game chal raha hai, khatam hone ka intezar karo');
-      if (room.players.length >= MAX_PLAYERS) return socket.emit('err', 'Room full hai (8 players max)');
+      if (room.state !== 'lobby') return socket.emit('err', 'A game is in progress. Please wait for it to finish');
+      if (room.players.length >= MAX_PLAYERS) return socket.emit('err', 'Room is full (8 players max)');
       p = { id: token, name: cleanName(name), socketId: socket.id, hand: [], out: false, connected: true };
       room.players.push(p);
     }
@@ -250,9 +251,9 @@ io.on('connection', socket => {
     const f = findBySocket(socket.id);
     if (!f) return;
     const { room, player } = f;
-    if (room.hostId !== player.id) return socket.emit('err', 'Sirf host game shuru kar sakta hai');
+    if (room.hostId !== player.id) return socket.emit('err', 'Only the host can start the game');
     if (room.state === 'playing') return;
-    if (room.players.filter(p => p.connected).length < 2) return socket.emit('err', 'Kam se kam 2 players chahiye');
+    if (room.players.filter(p => p.connected).length < 2) return socket.emit('err', 'At least 2 players are needed');
     startGame(room);
     broadcast(room);
   });
@@ -263,6 +264,15 @@ io.on('connection', socket => {
     const err = playCard(f.room, f.player.id, cardId);
     if (err) return socket.emit('err', err);
     broadcast(f.room);
+  });
+
+  socket.on('emoji', ({ e }) => {
+    const f = findBySocket(socket.id);
+    if (!f || !EMOJIS.includes(e)) return;
+    const now = Date.now();
+    if (f.player.lastEmoji && now - f.player.lastEmoji < 800) return;
+    f.player.lastEmoji = now;
+    io.to(f.room.code).emit('emoji', { pid: f.player.id, e });
   });
 
   socket.on('leave', () => leave(socket, true));
@@ -279,19 +289,19 @@ function leave(socket, intentional) {
 
   if (room.state !== 'playing' || intentional) {
     if (room.state === 'playing' && intentional) {
-      // game ke beech chhora: uske cards baaki logon mein baant do
+      // left mid-game: share their cards among the others
       const others = room.players.filter(p => p !== player && !p.out);
       player.hand.forEach((c, i) => others.length && others[i % others.length].hand.push(c));
       others.forEach(p => sortHand(p.hand));
-      addLog(room, `${player.name} game chhor gaya`);
+      addLog(room, `${player.name} left the game`);
       room.state = 'lobby';
       room.trick = [];
-      addLog(room, 'Game ruk gaya, host dobara shuru kare');
+      addLog(room, 'Game stopped. The host can start a new one');
     }
     room.players = room.players.filter(p => p !== player);
     if (room.hostId === player.id && room.players[0]) room.hostId = room.players[0].id;
   } else {
-    addLog(room, `${player.name} ka connection gaya, wapas aa sakta hai`);
+    addLog(room, `${player.name} disconnected and can rejoin`);
   }
 
   if (room.players.length === 0) { delete rooms[room.code]; return; }
@@ -301,5 +311,7 @@ function leave(socket, intentional) {
   broadcast(room);
 }
 
+// Made By Toshi With Pleasure
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Bhabhi Thulla chal raha hai: http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`Bhabhi Thulla server running: http://localhost:${PORT}`));
+      
